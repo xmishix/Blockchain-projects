@@ -5,8 +5,9 @@ To run the file please make sure you have Node install and that you are in the s
 Run the comman 'node blochain.js' to run the code 
 
 ## Screenshot of output and validation
-(image.png)
-(image-1.png)
+<img width="765" height="183" alt="image" src="https://github.com/user-attachments/assets/6db5d4ad-0f6f-4318-b43d-c516e7b240e6" />
+<img width="418" height="103" alt="image" src="https://github.com/user-attachments/assets/04243552-9801-4447-9190-52ad4934a5f1" />
+
 
 
 ## Reflection
