@@ -27,20 +27,23 @@ Open ```http:localhost:8000/``` and:
 
   ## Screenshots to include 
 
-  **Connected state (account & network visible)**
+  **Connected state (account & network visible):**
 
   <img width="946" height="724" alt="image" src="https://github.com/user-attachments/assets/1b9b8afa-5081-4753-bcd0-c1ad9aa8017b" />
 
 
-**Token loaded (name/symbol/decimals)**
+
+**Token loaded (name/symbol/decimals):**
 
 <img width="919" height="694" alt="image" src="https://github.com/user-attachments/assets/baa35adc-9f21-43e7-a602-b6e30165aa98" />
 
-**Successful transfer with tx hash, block, and gas/fee**
+
+**Successful transfer with tx hash, block, and gas/fee:**
 
 <img width="928" height="789" alt="image" src="https://github.com/user-attachments/assets/8da920e1-fb14-4c61-a7f3-847ad932c552" />
 
-**Token added in MetaMask assets**
+
+**Token added in MetaMask assets:**
 
 <img width="953" height="887" alt="image" src="https://github.com/user-attachments/assets/e5946488-d584-4564-8f12-b983bcd5bed6" />
 
@@ -63,3 +66,4 @@ Open ```http:localhost:8000/``` and:
   - Chain mismatch: If MetaMask chain changes, the app rebuilds clients, updates the UI, and warns the user to reload the token.
   - Fee reporting: On EIP-1559 networks we multiply effectiveGasPrice * gasUsed and display the approx ETH fee; if either is missing, we still show block & gas used.
   - Event stream hiccups: If watchContractEvent errors, we log a warning but keep the app usable (manual Refresh still works).
+
