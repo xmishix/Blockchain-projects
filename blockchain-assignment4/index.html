@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DIDLab — Minimal ERC-20 DApp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0b1320; --panel:#0f1a2b; --muted:#a9b4c8; --stroke:#24314a; --field:#0b1527; --pri:#335cff; --ok:#7be07b; --warn:#ffd166; --err:#ff6b6b; }
+    html,body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:0;background:var(--bg);color:#e6eaf2}
+    .wrap{max-width:920px;margin:40px auto;padding:24px;border:1px solid var(--stroke);border-radius:14px;background:var(--panel)}
+    h1{margin:0 0 16px;font-size:22px}
+    h3{margin:8px 0 12px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0}
+    .row > *{flex:1}
+    label{display:block;margin:0 0 6px;font-size:12px;color:var(--muted)}
+    input,button{padding:10px 12px;border:1px solid #314164;background:var(--field);color:#e6eaf2;border-radius:10px;outline:none}
+    input:disabled{opacity:.7}
+    button{cursor:pointer}
+    button.primary{background:var(--pri);border-color:var(--pri)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .card{padding:12px;border:1px solid var(--stroke);border-radius:10px;background:var(--field)}
+    .muted{color:var(--muted)}
+    .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+    .kvs{display:grid;grid-template-columns:180px 1fr;gap:8px}
+    .kvs div{padding:6px 8px;border-bottom:1px dashed #22314e}
+    .pill{display:inline-block;border:1px solid var(--stroke);padding:2px 8px;border-radius:999px;background:#0f1a2b;font-size:12px}
+    .txline{border-left:3px solid #22314e;margin:6px 0;padding:6px 10px}
+    .footer{opacity:.75;font-size:12px;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🚀 DIDLab — Minimal ERC-20 DApp</h1>
+
+    <!-- CONFIG -->
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>Team RPC URL</label>
+          <input id="rpcUrl" class="mono" placeholder="https://hh-XX.didlab.org" />
+        </div>
+        <div>
+          <label>Team Chain ID (decimal)</label>
+          <input id="chainIdDec" class="mono" placeholder="31337" />
+        </div>
+        <div>
+          <label>Token Address</label>
+          <input id="tokenAddr" class="mono" placeholder="0xYourErc20..." />
+        </div>
+      </div>
+      <div class="row">
+        <button id="btnConnect" class="primary">1) Connect & Switch Network</button>
+        <button id="btnLoad">2) Load Token</button>
+        <button id="btnWatch">Add Token to MetaMask</button>
+        <button id="btnRefresh">Refresh Balance</button>
+      </div>
+      <div class="footer muted">All three fields persist to <span class="pill">localStorage</span>.</div>
+    </div>
+
+    <!-- STATUS -->
+    <div class="row">
+      <div class="card">
+        <div class="kvs">
+          <div class="muted">Account</div><div id="acct" class="mono">—</div>
+          <div class="muted">Network</div><div id="net" class="mono">—</div>
+          <div class="muted">Token</div><div id="meta" class="mono">—</div>
+          <div class="muted">Balance</div><div id="bal" class="mono">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRANSFER -->
+    <div class="card">
+      <h3>Transfer</h3>
+      <div class="row">
+        <div><label>Recipient</label><input id="to" class="mono" placeholder="Recipient 0x..." /></div>
+        <div><label>Amount (human units)</label><input id="amt" class="mono" placeholder="e.g. 12.5" /></div>
+        <div style="flex:0 0 auto;align-self:flex-end"><button id="btnSend" class="primary">Send</button></div>
+      </div>
+      <div id="txlog" class="mono muted"></div>
+    </div>
+
+    <p class="muted">Tip: if you need to use a specific deployer/account, import its private key into MetaMask for this DIDLab chain.</p>
+  </div>
+
+  <script type="module">
+    import {
+      createPublicClient, createWalletClient, custom,
+      getAddress, isAddress, formatUnits, parseUnits, formatEther
+    } from "https://esm.sh/viem@2.37.5";
+
+    // --- Minimal ERC-20 ABI ---
+    const ERC20_ABI = [
+      { type:"function", name:"name", stateMutability:"view", inputs:[], outputs:[{type:"string"}]},
+      { type:"function", name:"symbol", stateMutability:"view", inputs:[], outputs:[{type:"string"}]},
+      { type:"function", name:"decimals", stateMutability:"view", inputs:[], outputs:[{type:"uint8"}]},
+      { type:"function", name:"balanceOf", stateMutability:"view", inputs:[{name:"account",type:"address"}], outputs:[{type:"uint256"}]},
+      { type:"function", name:"transfer", stateMutability:"nonpayable", inputs:[{name:"to",type:"address"},{name:"amount",type:"uint256"}], outputs:[{type:"bool"}]},
+      { type:"event", name:"Transfer", inputs:[
+        {indexed:true, name:"from", type:"address"},
+        {indexed:true, name:"to", type:"address"},
+        {indexed:false, name:"value", type:"uint256"}
+      ]},
+    ];
+
+    // --- DOM helpers ---
+    const $ = (id)=>document.getElementById(id);
+    const rpcEl = $("rpcUrl"), chainEl = $("chainIdDec"), tokenEl = $("tokenAddr");
+    const acctEl = $("acct"), netEl = $("net"), metaEl = $("meta"), balEl = $("bal");
+    const txlog = $("txlog");
+
+    // Persisted keys
+    const LS_KEYS = { rpc:"didlab.rpc", chain:"didlab.chainIdDec", token:"didlab.tokenAddress" };
+
+    // State
+    let walletClient, publicClient, account, token;
+    let decimals=18, symbol="???", name="???";
+    let currentChain = null;
+    let unwatchTransfer = null;
+
+    // Utils
+    const hexChainId = (id)=>"0x"+Number(id).toString(16);
+    const escapeHtml = (s)=>s.replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    const ok  = (m)=> txlog.innerHTML = `<div class="txline ok">${escapeHtml(m)}</div>` + txlog.innerHTML;
+    const warn= (m)=> txlog.innerHTML = `<div class="txline warn">${escapeHtml(m)}</div>` + txlog.innerHTML;
+    const err = (m)=> txlog.innerHTML = `<div class="txline err">${escapeHtml(m)}</div>` + txlog.innerHTML;
+
+    function ensureMetaMask() {
+      if (!window.ethereum) throw new Error("MetaMask not found. Please install it.");
+    }
+
+    function buildChain() {
+      const id = Number(chainEl.value);
+      if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid decimal Chain ID.");
+      const rpc = String(rpcEl.value || "").trim();
+      if (!/^https?:\/\//i.test(rpc)) throw new Error("Invalid RPC URL.");
+      currentChain = {
+        id,
+        name: `DIDLab (${id})`,
+        nativeCurrency: { name:"Ether", symbol:"ETH", decimals:18 },
+        rpcUrls: { default: { http: [rpc] } }
+      };
+      return currentChain;
+    }
+
+    async function addOrSwitchNetwork() {
+      const idDec = Number(chainEl.value);
+      const rpc = rpcEl.value.trim();
+      const params = [{
+        chainId: hexChainId(idDec),
+        chainName: `DIDLab (${idDec})`,
+        rpcUrls: [rpc],
+        nativeCurrency: { name:"Ether", symbol:"ETH", decimals:18 }
+      }];
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params:[{ chainId: params[0].chainId }] });
+      } catch (e) {
+        // If not added yet, add then switch
+        await window.ethereum.request({ method: "wallet_addEthereumChain", params });
+      }
+    }
+
+    async function connect() {
+      ensureMetaMask();
+      const chain = buildChain();
+      walletClient = createWalletClient({ chain, transport: custom(window.ethereum) });
+      publicClient = createPublicClient({ chain, transport: custom(window.ethereum) });
+
+      await addOrSwitchNetwork();
+
+      const addrs = await window.ethereum.request({ method: "eth_requestAccounts" });
+      account = getAddress(addrs[0]);
+      acctEl.textContent = account;
+      netEl.textContent = `${chain.name} (#${chain.id})`;
+      ok("Connected & network ready.");
+
+      // React to wallet changes
+      window.ethereum.removeAllListeners?.("accountsChanged");
+      window.ethereum.removeAllListeners?.("chainChanged");
+      window.ethereum.on?.("accountsChanged", (accs)=>{
+        if (!accs?.length) { acctEl.textContent = "—"; account = undefined; return; }
+        account = getAddress(accs[0]);
+        acctEl.textContent = account;
+        refresh().catch(()=>{});
+      });
+      window.ethereum.on?.("chainChanged", (chainIdHex)=>{
+        const dec = parseInt(chainIdHex, 16);
+        netEl.textContent = `DIDLab (${dec}) (#${dec})`;
+        warn(`Chain switched to #${dec}. You may need to reconnect or reload token.`);
+        // Rebuild clients on chain switch
+        currentChain = {
+          id: dec, name:`DIDLab (${dec})`,
+          nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18},
+          rpcUrls:{default:{http:[rpcEl.value.trim()]}}
+        };
+        walletClient = createWalletClient({ chain: currentChain, transport: custom(window.ethereum) });
+        publicClient = createPublicClient({ chain: currentChain, transport: custom(window.ethereum) });
+      });
+    }
+
+    async function loadToken() {
+      if (!publicClient || !account) throw new Error("Connect first.");
+      const addrRaw = tokenEl.value.trim();
+      if (!isAddress(addrRaw)) throw new Error("Invalid token address.");
+      token = getAddress(addrRaw);
+
+      // Read token metadata (guards for non-ERC20)
+      try {
+        [name, symbol, decimals] = await Promise.all([
+          publicClient.readContract({ address: token, abi: ERC20_ABI, functionName:"name" }),
+          publicClient.readContract({ address: token, abi: ERC20_ABI, functionName:"symbol" }),
+          publicClient.readContract({ address: token, abi: ERC20_ABI, functionName:"decimals" }),
+        ]);
+      } catch (e) {
+        throw new Error("Failed to read token metadata. Is this a valid ERC-20 on this chain?");
+      }
+
+      metaEl.textContent = `${name} (${symbol}), ${decimals}d — ${token}`;
+      ok(`Loaded token ${symbol}.`);
+
+      // Event watch: refresh balance when a Transfer touches us
+      if (unwatchTransfer) { unwatchTransfer(); unwatchTransfer = null; }
+      unwatchTransfer = publicClient.watchContractEvent({
+        address: token, abi: ERC20_ABI, eventName: "Transfer",
+        onLogs: (logs)=>{
+          for (const l of logs) {
+            const from = String(l.args.from||"").toLowerCase();
+            const to   = String(l.args.to||"").toLowerCase();
+            if (from===account.toLowerCase() || to===account.toLowerCase()) {
+              refresh().catch(()=>{});
+              break;
+            }
+          }
+        },
+        onError: (e)=> warn(`Event stream warning: ${e?.shortMessage||e?.message||e}`)
+      });
+
+      await refresh();
+    }
+
+    async function refresh() {
+      if (!token || !account) return;
+      try {
+        const bal = await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName:"balanceOf", args:[account] });
+        balEl.textContent = `${formatUnits(bal, Number(decimals))} ${symbol}`;
+      } catch (e) {
+        err(`Failed to read balance: ${e?.shortMessage||e?.message||e}`);
+      }
+    }
+
+    async function send() {
+      if (!token) throw new Error("Load token first.");
+      if (!account) throw new Error("Connect first.");
+
+      // Validate inputs
+      const toRaw = $("to").value.trim();
+      if (!isAddress(toRaw)) throw new Error("Invalid recipient address.");
+      const to = getAddress(toRaw);
+
+      const amtStr = $("amt").value.trim();
+      if (!amtStr) throw new Error("Enter amount.");
+      const amount = parseUnits(amtStr, Number(decimals));
+      if (amount <= 0n) throw new Error("Amount must be greater than zero.");
+
+      // Submit tx
+      let hash;
+      try {
+        hash = await walletClient.writeContract({
+          address: token, abi: ERC20_ABI, functionName:"transfer",
+          args:[to, amount],
+          // Leave tips optional; many DIDLab nodes auto-fill. If needed, uncomment:
+          // maxPriorityFeePerGas: 2_000_000_000n,
+          // maxFeePerGas: 21_000_000_000n,
+          account
+        });
+      } catch (e) {
+        throw new Error(e?.shortMessage || e?.message || "Transaction failed to submit.");
+      }
+
+      warn(`Submitted: ${hash}`);
+      // Wait for receipt
+      let rcpt;
+      try {
+        rcpt = await publicClient.waitForTransactionReceipt({ hash });
+      } catch (e) {
+        throw new Error(e?.shortMessage || e?.message || "Failed waiting for confirmation.");
+      }
+
+      const gasUsed = rcpt.gasUsed ?? 0n;
+      const eff = rcpt.effectiveGasPrice ?? 0n;
+      const feeWei = gasUsed * eff;
+      const feeEth = formatEther(feeWei);
+
+      ok(`Mined in block ${rcpt.blockNumber} • gasUsed ${gasUsed} • effectiveGasPrice ${eff} wei • fee ≈ ${feeEth} ETH`);
+      await refresh();
+    }
+
+    async function watchAsset() {
+      if (!token || !symbol) throw new Error("Load token first.");
+      await window.ethereum.request({
+        method: "wallet_watchAsset",
+        params: { type: "ERC20", options: { address: token, symbol, decimals:Number(decimals) } }
+      });
+      ok("Requested MetaMask to add this token.");
+    }
+
+    // Wire buttons
+    $("btnConnect").onclick = async ()=>{ try { await connect(); } catch(e){ err(e.message||e);} };
+    $("btnLoad").onclick    = async ()=>{ try { await loadToken(); } catch(e){ err(e.message||e);} };
+    $("btnRefresh").onclick = async ()=>{ try { await refresh(); } catch(e){ err(e.message||e);} };
+    $("btnSend").onclick    = async ()=>{ try { await send(); } catch(e){ err(e.message||e);} };
+    $("btnWatch").onclick   = async ()=>{ try { await watchAsset(); } catch(e){ err(e.message||e);} };
+
+    // Persistence — load & save
+    function loadPersisted() {
+      const rpc = localStorage.getItem(LS_KEYS.rpc) || "https://hh-03.didlab.org";
+      const chain = localStorage.getItem(LS_KEYS.chain) || "31339";
+      const token = localStorage.getItem(LS_KEYS.token) || "0x49fd2be640db2910c2fab69bb8531ab6e76127ff";
+      rpcEl.value = rpc; chainEl.value = chain; tokenEl.value = token;
+      if (token) metaEl.textContent = `Ready to load ${token}`;
+    }
+    function wirePersistence() {
+      rpcEl.addEventListener("change", ()=> localStorage.setItem(LS_KEYS.rpc, rpcEl.value.trim()));
+      chainEl.addEventListener("change", ()=> localStorage.setItem(LS_KEYS.chain, chainEl.value.trim()));
+      tokenEl.addEventListener("change", ()=> localStorage.setItem(LS_KEYS.token, tokenEl.value.trim()));
+    }
+
+    // Boot
+    loadPersisted();
+    wirePersistence();
+  </script>
+</body>
+</html>
+
