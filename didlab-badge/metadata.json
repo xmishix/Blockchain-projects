@@ -1,0 +1,11 @@
+{
+  "name": "DIDLab Hackathon Badge",
+  "description": "Proof-of-Build badge",
+  "image": "ipfs://QmYourImageCID",
+  "attributes": [
+    {
+      "trait_type": "Cohort",
+      "value": "Fall 2025"
+    }
+  ]
+}
